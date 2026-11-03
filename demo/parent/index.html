@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kết quả của con · Quản lý bài thi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../css/tokens.css">
+<link rel="stylesheet" href="../css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import * as db from "../lib/db.js";
+import * as ui from "../lib/ui.js";
+const { esc } = ui;
+const main = await ui.shell("parent");
+main.classList.add("wide");
+const [subjects, types] = await Promise.all([db.listSubjects(), db.listExamTypes()]);
+
+// Không có tài khoản: quyền xem nằm ở token trong link (?t=). Thiết bị chỉ nhớ các link đã mở để chuyển giữa các con.
+const KIDS = "qlbt:kids";
+const tokenOf = (text) => { try { return new URL(text).searchParams.get("t") || text.trim(); } catch { return text.trim(); } };
+const urlToken = new URLSearchParams(location.search).get("t");
+let tokens = [];
+try { tokens = JSON.parse(localStorage.getItem(KIDS) || "[]"); } catch {}
+if (urlToken && !tokens.includes(urlToken)) tokens.push(urlToken);
+let children = (await Promise.all(tokens.map(async (t) => { const c = await db.getChild(t); return c && { ...c, token: t }; }))).filter(Boolean);
+localStorage.setItem(KIDS, JSON.stringify(children.map((c) => c.token)));
+let child = children.find((c) => c.token === urlToken) ?? children[0];
+const badLink = urlToken && !children.some((c) => c.token === urlToken);
+let filter = {};
+let papers = [];
+let selectedId = null;
+
+// Từ 768px: danh sách bên trái, chi tiết bên phải. Dưới 768px: chi tiết mở trong sheet toàn màn hình.
+const mq = matchMedia("(min-width: 768px)");
+mq.addEventListener("change", () => child && papers && paint());
+
+const norm = (p) => (p.score / p.exam.max_score) * 10; // quy về thang 10
+const weightOf = (p) => types.find((t) => t.id === p.exam.type_id)?.weight ?? 1;
+
+function chart(list) {
+  const pts = [...list].reverse().filter((p) => p.score != null);
+  if (pts.length < 2) return "";
+  const W = 340, H = 180, L = 28, R = 24, T = 12, B = 28;
+  const x = (i) => L + (i * (W - L - R)) / (pts.length - 1);
+  const y = (v) => T + (1 - v / 10) * (H - T - B);
+  const grid = [0, 5, 10].map((v) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`).join("");
+  const line = pts.map((p, i) => `${i ? "L" : "M"}${x(i)} ${y(norm(p))}`).join(" ");
+  const dots = pts.map((p, i) => `<circle class="dot" cx="${x(i)}" cy="${y(norm(p))}" r="4"/>`).join("");
+  const labels = pts.map((p, i) => (pts.length <= 6 || i % 2 === 0 ? `<text x="${x(i)}" y="${H - 8}" text-anchor="middle">${ui.fmtDate(p.exam.date).slice(0, 5)}</text>` : "")).join("");
+  const alt = "Điểm theo thời gian: " + pts.map((p) => `${ui.fmtDate(p.exam.date).slice(0, 5)}: ${ui.fmtScore(norm(p))}`).join(", ");
+  return `<h2 class="section-title">Điểm theo thời gian</h2><div class="panel"><svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(alt)}">${grid}<path class="line" d="${line}"/>${dots}${labels}</svg></div>`;
+}
+
+async function detailHtml(p, withTitle) {
+  const urls = await Promise.all(p.images.map(db.getImageUrl));
+  return `
+    ${withTitle ? `<h2>${esc(p.exam.title)}</h2>` : ""}
+    <p class="muted small">${esc(p.student.name)} · Lớp ${esc(p.exam.class.name)} · ${esc(p.exam.subject.name)} · ${esc(p.exam.type.name)} · ${ui.fmtDate(p.exam.date)}</p>
+    <div class="panel" style="margin: var(--space-3) 0"><p class="muted small">Điểm</p><p class="num" style="font-size: var(--fs-3xl); font-weight: 700">${ui.fmtScore(p.score)}<span class="muted" style="font-size: var(--fs-lg)">/${ui.fmtScore(p.exam.max_score)}</span></p></div>
+    <h3>Nhận xét của giáo viên</h3>
+    <div class="panel" style="margin: var(--space-2) 0 var(--space-4)"><p>${p.comment ? esc(p.comment).replace(/\n/g, "<br>") : '<span class="muted">Giáo viên chưa nhận xét bài này.</span>'}</p></div>
+    <h3>Bài làm (${urls.length} ảnh)</h3>
+    ${urls.length ? `<div class="pages" style="margin-top: var(--space-2)">${urls.map((u, i) => `<button class="photo" data-i="${i}" aria-label="Xem ảnh ${i + 1} toàn màn hình"><img src="${u}" alt="Bài làm, trang ${i + 1}"></button>`).join("")}</div>` : '<p class="muted">Bài này không có ảnh.</p>'}`;
+}
+
+async function showDetail() {
+  const aside = main.querySelector("#detail");
+  const p = papers.find((x) => x.id === selectedId);
+  if (!aside) return;
+  aside.innerHTML = p ? await detailHtml(p, true) : '<p class="muted">Chọn một bài ở danh sách để xem điểm, nhận xét và ảnh bài làm.</p>';
+}
+
+async function load() {
+  const n = ui.countFilters(filter);
+  if (!child) {
+    main.innerHTML = `<div class="page-head"><h1>Kết quả của con</h1></div>` +
+      (badLink ? '<div class="alert" role="alert" style="margin-bottom: var(--space-4)">Link không đúng hoặc giáo viên đã đổi link. Hãy liên hệ giáo viên để nhận link mới.</div>' : "") +
+      ui.empty("Mở link giáo viên đã gửi để xem bài của con. Không cần tạo tài khoản.", '<button class="btn primary" data-link>Dán link</button>');
+    return;
+  }
+  main.innerHTML = `
+    <div class="page-head"><h1>Kết quả của con</h1><div class="actions"><button class="btn" id="filter">${n ? `Lọc (${n})` : "Lọc"}</button><button class="btn" data-link>Thêm con</button></div></div>
+    ${children.length > 1 ? `<div class="chips" role="group" aria-label="Chọn con" style="margin-bottom: var(--space-4)">${children.map((c) => `<button class="chip" data-child="${c.token}" aria-pressed="${c === child}">${esc(c.name)}</button>`).join("")}</div>` : ""}
+    <div id="body">${ui.skeleton(4)}</div>`;
+  try {
+    papers = await db.listChildPapers(child.token, filter);
+    if (!papers.some((p) => p.id === selectedId)) selectedId = null;
+    paint();
+  } catch {
+    main.querySelector("#body").innerHTML = ui.errorBox("Không tải được kết quả.");
+  }
+}
+
+function paint() {
+  const body = main.querySelector("#body");
+  if (!body) return;
+  const n = ui.countFilters(filter);
+  if (mq.matches && !selectedId && papers.length) selectedId = papers[0].id; // desktop: luôn có 1 bài đang xem
+  const scored = papers.filter((p) => p.score != null);
+  const wsum = scored.reduce((s, p) => s + weightOf(p), 0);
+  const avg = wsum ? scored.reduce((s, p) => s + norm(p) * weightOf(p), 0) / wsum : null;
+  body.innerHTML = `
+    <div class="split">
+      <div>
+        <p class="muted" style="margin-bottom: var(--space-3)">${esc(child.name)} · Lớp ${esc(child.class.name)}</p>
+        <div class="panel"><dl class="stats">
+          <div><dt>Điểm trung bình</dt><dd class="num">${avg == null ? "—" : ui.fmtScore(+avg.toFixed(1))}</dd></div>
+          <div><dt>Số bài</dt><dd class="num">${papers.length}</dd></div>
+          <div><dt>Bài mới</dt><dd class="num">${papers.filter((p) => !p.viewed).length}</dd></div></dl>
+          <p class="hint" style="margin-top: var(--space-2)">Trung bình tính theo hệ số loại bài, thang 10.</p></div>
+        ${chart(papers)}
+        <h2 class="section-title">Các bài đã chấm</h2>
+        ${papers.length ? `<ul class="list">${papers.map((p) => `
+          <li><button class="row" data-paper="${p.id}"${p.id === selectedId && mq.matches ? ' aria-current="true"' : ""}>
+            <span class="title">${esc(p.exam.title)}</span>
+            <span class="score num">${ui.fmtScore(p.score)}/${ui.fmtScore(p.exam.max_score)}</span>
+            <span class="meta">${p.viewed ? "" : '<span class="badge info">Mới</span> '}${esc(p.exam.subject.name)} · ${esc(p.exam.type.name)} · ${ui.fmtDate(p.exam.date)}</span>
+          </button></li>`).join("")}</ul>`
+          : ui.empty(n ? "Không có bài khớp bộ lọc." : "Giáo viên chưa đăng bài nào của con.", n ? '<button class="btn" data-clear>Xóa lọc</button>' : "")}
+      </div>
+      <aside id="detail" class="detail panel" aria-label="Chi tiết bài" aria-live="polite"></aside>
+    </div>`;
+  if (mq.matches) showDetail();
+}
+
+async function open(id) {
+  const p = papers.find((x) => x.id === id);
+  if (!p) return;
+  selectedId = id;
+  if (!p.viewed) { await db.markViewed(child.token, id); p.viewed = true; }
+  paint();
+  if (!mq.matches) ui.sheet(p.exam.title, await detailHtml(p, false), "full");
+}
+
+main.addEventListener("click", (e) => {
+  if (e.target.closest("[data-retry]")) load();
+  if (e.target.closest("[data-clear]")) { filter = {}; load(); }
+  const c = e.target.closest("[data-child]");
+  if (c) { child = children.find((x) => x.token === c.dataset.child); selectedId = null; history.replaceState(null, "", `?t=${child.token}`); load(); }
+  if (e.target.closest("[data-link]")) addChild();
+  const row = e.target.closest("[data-paper]");
+  if (row) open(row.dataset.paper);
+  if (e.target.closest("#filter"))
+    ui.filterSheet([
+      ...(subjects.length > 1 ? [{ key: "subjectId", label: "Môn", items: subjects }] : []), { key: "typeId", label: "Loại bài", items: types },
+      { key: "term", label: "Học kỳ", items: db.TERMS.map((t) => ({ id: t, name: t })) },
+    ], filter, (v) => { filter = v; selectedId = null; load(); });
+});
+// Ảnh nằm cả trong pane bên phải lẫn trong sheet (ngoài <main>) nên bắt ở document.
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-i]");
+  const p = papers.find((x) => x.id === selectedId);
+  if (b && p) ui.zoom(p.images[+b.dataset.i], `Trang ${+b.dataset.i + 1}`);
+});
+
+function addChild() {
+  const d = ui.sheet("Thêm con", `<form class="stack" novalidate>
+    <div class="field"><label for="link">Link giáo viên gửi</label><input id="link" inputmode="url" autocomplete="off" aria-describedby="link-err"><span class="hint">Dán nguyên link của con thứ hai. Mỗi con có một link riêng.</span><span class="err" id="link-err"></span></div>
+    <div class="actions"><button type="button" class="btn" data-close>Hủy</button><button class="btn primary">Thêm con</button></div></form>`);
+  const f = d.querySelector("form");
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const t = tokenOf(f.link.value);
+    const c = t && (await db.getChild(t));
+    if (!c) {
+      f.link.setAttribute("aria-invalid", "true");
+      d.querySelector("#link-err").textContent = "Link không đúng. Dán lại nguyên link giáo viên đã gửi hoặc hỏi giáo viên link mới.";
+      f.link.focus();
+      return;
+    }
+    if (!children.some((x) => x.token === t)) children.push({ ...c, token: t });
+    child = children.find((x) => x.token === t);
+    selectedId = null;
+    localStorage.setItem(KIDS, JSON.stringify(children.map((x) => x.token)));
+    history.replaceState(null, "", `?t=${t}`);
+    d.close(); ui.toast(`Đã thêm ${c.name}.`); load();
+  });
+}
+await load();
+if (badLink && child) ui.toast("Link vừa mở không đúng. Đang hiện con đã lưu trên máy này.", "error");
+</script>
+</body>
+</html>

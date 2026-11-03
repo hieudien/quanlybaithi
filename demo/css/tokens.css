@@ -1,0 +1,59 @@
+/*
+ * Design brief
+ * - Người dùng: giáo viên (điện thoại + laptop), phụ huynh (chủ yếu điện thoại).
+ * - Tác vụ chính: giáo viên đăng bài thi kèm điểm/nhận xét; phụ huynh xem bài của con.
+ * - Tông: nghiêm túc, rõ ràng, ít chữ. Một màu chủ đạo xanh lục đậm + neutral.
+ * - Khi port sang Next.js: giữ nguyên file này làm globals (hoặc map sang tailwind.config).
+ */
+:root {
+  --font: "Be Vietnam Pro", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-primary: #0b6b5c;
+  --color-primary-hover: #095547;
+  --color-primary-soft: #e3f1ee;
+  --color-on-primary: #ffffff;
+
+  --color-bg: #f5f6f4;
+  --color-surface: #ffffff;
+  --color-border: #d8dcd8;
+  --color-text: #1c2420;
+  --color-text-muted: #525c56;
+
+  --color-success: #1b6e3a;
+  --color-success-soft: #e4f3e8;
+  --color-warning: #7a4f00;
+  --color-warning-soft: #fbf0d8;
+  --color-danger: #b3261e;
+  --color-danger-soft: #fbe7e5;
+  --color-info: #1f5f99;
+  --color-info-soft: #e3eef8;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius-sm: 6px;
+  --radius-md: 12px;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.08);
+  --shadow-md: 0 8px 24px rgb(0 0 0 / 0.16);
+
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-dropdown: 20;
+  --z-modal: 30;
+  --z-toast: 40;
+
+  --fs-xs: 0.8125rem;
+  --fs-sm: 0.875rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.125rem;
+  --fs-xl: 1.25rem;
+  --fs-2xl: 1.5rem;
+  --fs-3xl: clamp(1.75rem, 1.2rem + 2vw, 2rem);
+}

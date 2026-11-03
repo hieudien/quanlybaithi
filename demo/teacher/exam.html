@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Chi tiết bài thi · Quản lý bài thi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="../css/tokens.css">
+<link rel="stylesheet" href="../css/app.css">
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import * as db from "../lib/db.js";
+import * as ui from "../lib/ui.js";
+const { esc } = ui;
+const main = await ui.shell("teacher", "exams");
+const examId = new URLSearchParams(location.search).get("id");
+const exam = await db.getExam(examId);
+if (!exam) {
+  main.innerHTML = `<a class="back" href="exams.html">← Bài thi</a>` + ui.empty("Không tìm thấy bài thi này.", '<a class="btn primary" href="exams.html">Về danh sách bài thi</a>');
+  await new Promise(() => {});
+}
+const students = await db.listStudents({ classId: exam.class_id });
+const max = exam.max_score;
+
+main.innerHTML = `
+  <a class="back" href="exams.html">← Bài thi</a>
+  <div class="page-head"><div><h1>${esc(exam.title)}</h1>
+    <p class="muted">${esc(exam.class.name)} · ${esc(exam.subject.name)} · ${esc(exam.type.name)} · ${ui.fmtDate(exam.date)} · ${esc(exam.term)}</p></div>
+    <div class="actions"><button class="btn" id="publish-all" hidden>Đăng tất cả nháp</button><button class="btn primary" id="add">Thêm bài làm</button></div>
+  </div><div id="list"></div><div id="missing"></div>`;
+const listEl = main.querySelector("#list");
+
+async function render() {
+  listEl.innerHTML = ui.skeleton(3);
+  try {
+    const papers = await db.listPapers({ examId });
+    const drafts = papers.filter((p) => p.status === "draft" && p.images.length);
+    const pa = main.querySelector("#publish-all");
+    pa.hidden = !drafts.length;
+    pa.textContent = `Đăng ${drafts.length} bài nháp`;
+    listEl.innerHTML = papers.length
+      ? `<ul class="list">${papers.map((p) => `
+        <li><button class="row" data-paper="${p.id}">
+          <span class="title">${esc(p.student.name)}</span>
+          <span class="score num">${ui.fmtScore(p.score)}/${ui.fmtScore(max)}</span>
+          <span class="meta">${ui.statusBadge(p.status)} ${p.images.length} ảnh${p.status === "published" ? ` · ${p.viewed ? "Phụ huynh đã xem" : "Phụ huynh chưa xem"}` : ""}</span>
+        </button></li>`).join("")}</ul>`
+      : ui.empty("Chưa có bài làm nào. Chụp ảnh bài giấy rồi thêm vào đây.", '<button class="btn primary" data-add>Thêm bài làm</button>');
+    const done = new Set(papers.map((p) => p.student_id));
+    const rest = students.filter((s) => !done.has(s.id));
+    main.querySelector("#missing").innerHTML = rest.length
+      ? `<h2 class="section-title">Chưa có bài làm (${rest.length})</h2><p class="muted">${rest.map((s) => esc(s.name)).join(", ")}</p>` : "";
+    main.querySelector("#add").disabled = !rest.length;
+  } catch {
+    listEl.innerHTML = ui.errorBox("Không tải được danh sách bài làm.");
+  }
+}
+
+main.addEventListener("click", async (e) => {
+  if (e.target.closest("[data-retry]")) render();
+  if (e.target.closest("#add, [data-add]")) openPaper(null);
+  const row = e.target.closest("[data-paper]");
+  if (row) openPaper(await db.getPaper(row.dataset.paper));
+  if (e.target.closest("#publish-all")) {
+    const n = await db.publishDrafts(examId);
+    ui.toast(`Đã đăng ${n} bài cho phụ huynh.`);
+    render();
+  }
+});
+
+async function openPaper(paper) {
+  const taken = new Set((await db.listPapers({ examId })).map((p) => p.student_id));
+  const pickable = paper ? students.filter((s) => s.id === paper.student_id) : students.filter((s) => !taken.has(s.id));
+  // items: ảnh đang có (path) hoặc ảnh mới chọn (blob)
+  const items = await Promise.all((paper?.images ?? []).map(async (path) => ({ path, url: await db.getImageUrl(path) })));
+  const d = ui.sheet(paper ? "Sửa bài làm" : "Thêm bài làm", `<form class="stack" novalidate>
+    <div class="field"><label for="student">Học sinh</label><select id="student" ${paper ? "disabled" : ""} aria-describedby="student-err">${ui.opts(pickable, paper?.student_id, paper ? "" : "Chọn học sinh")}</select><span class="err" id="student-err"></span></div>
+    <div class="field"><label for="score">Điểm (tối đa ${ui.fmtScore(max)})</label><input id="score" type="text" inputmode="decimal" autocomplete="off" value="${paper?.score != null ? ui.fmtScore(paper.score) : ""}" aria-describedby="score-err"><span class="err" id="score-err"></span></div>
+    <div class="field"><label for="comment">Nhận xét cho phụ huynh</label><textarea id="comment" rows="4">${esc(paper?.comment ?? "")}</textarea></div>
+    <div class="field"><label for="files">Ảnh bài làm</label><input id="files" type="file" accept="image/*" multiple aria-describedby="files-err"><span class="hint">Có thể chọn nhiều ảnh. Ảnh được nén trước khi lưu.</span><span class="err" id="files-err"></span><div class="thumbs" id="thumbs"></div></div>
+    <div class="actions">${paper ? '<button type="button" class="btn danger" data-del>Xóa bài làm</button>' : ""}<button type="button" class="btn" data-save="draft">Lưu nháp</button><button type="button" class="btn primary" data-save="published">Đăng cho phụ huynh</button></div></form>`);
+  const $ = (id) => d.querySelector("#" + id);
+  const err = (id, msg) => { $(id + "-err").textContent = msg; $(id)?.toggleAttribute("aria-invalid", !!msg); if (msg) $(id)?.setAttribute("aria-invalid", "true"); };
+
+  const drawThumbs = () => {
+    $("thumbs").innerHTML = items.map((it, i) => `<div class="thumb"><img src="${it.url}" alt="Ảnh ${i + 1}"><button type="button" class="btn" data-rm="${i}" aria-label="Xóa ảnh ${i + 1}">Xóa</button></div>`).join("");
+  };
+  drawThumbs();
+  $("thumbs").addEventListener("click", (e) => { const b = e.target.closest("[data-rm]"); if (b) { items.splice(+b.dataset.rm, 1); drawThumbs(); } });
+  $("files").addEventListener("change", async (e) => {
+    err("files", "");
+    for (const f of e.target.files) {
+      try { const blob = await ui.compressImage(f); items.push({ blob, url: URL.createObjectURL(blob) }); }
+      catch { err("files", `Không đọc được ảnh ${f.name}. Thử chụp lại hoặc chọn ảnh JPG/PNG.`); }
+    }
+    e.target.value = "";
+    drawThumbs();
+  });
+
+  const saveBtns = d.querySelectorAll("[data-save]");
+  const busy = (on, status) => saveBtns.forEach((b) => { b.disabled = on; b.textContent = on && b.dataset.save === status ? "Đang lưu..." : b.dataset.save === "draft" ? "Lưu nháp" : "Đăng cho phụ huynh"; });
+  saveBtns.forEach((b) => b.addEventListener("click", async () => {
+    const status = b.dataset.save;
+    const raw = $("score").value.trim();
+    const score = raw === "" ? null : ui.parseScore(raw);
+    let bad = false;
+    err("student", ""); err("score", "");
+    if (!$("student").value) { err("student", "Chọn học sinh."); bad = true; }
+    if (raw !== "" && (Number.isNaN(score) || score < 0 || score > max)) { err("score", `Điểm phải từ 0 đến ${ui.fmtScore(max)}.`); bad = true; }
+    if (status === "published") {
+      if (score == null && !bad) { err("score", "Nhập điểm trước khi đăng."); bad = true; }
+      if (!items.length) { err("files", "Thêm ít nhất 1 ảnh trước khi đăng."); bad = true; }
+    }
+    if (bad) { d.querySelector("[aria-invalid=true]")?.focus(); return; }
+    busy(true, status);
+    try {
+      const images = [];
+      for (const it of items) images.push(it.path ?? (await db.putImage(it.blob)));
+      await db.savePaper({ id: paper?.id, exam_id: examId, student_id: $("student").value, score, comment: $("comment").value.trim(), status, images });
+      d.close();
+      ui.toast(status === "published" ? "Đã đăng bài cho phụ huynh." : "Đã lưu nháp.");
+      render();
+    } catch (ex) {
+      busy(false);
+      err("student", ex.message);
+    }
+  }));
+  d.querySelector("[data-del]")?.addEventListener("click", async () => {
+    if (!confirm(`Xóa bài làm của ${paper.student.name}? Ảnh, điểm và nhận xét sẽ mất vĩnh viễn, phụ huynh không xem được nữa.`)) return;
+    await db.deletePaper(paper.id);
+    d.close();
+    ui.toast("Đã xóa bài làm.");
+    render();
+  });
+}
+await render();
+</script>
+</body>
+</html>

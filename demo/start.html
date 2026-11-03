@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Quản lý bài thi</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<main class="no-tabbar" style="padding-top: var(--space-6)">
+  <h1>Quản lý bài thi</h1>
+  <p class="muted" style="margin: var(--space-2) 0 var(--space-5)">Bản demo. Dữ liệu lưu ngay trong trình duyệt này.</p>
+  <h2 class="section-title" style="margin-top: 0">Giáo viên</h2>
+  <ul class="list" id="teacher"></ul>
+  <h2 class="section-title">Phụ huynh</h2>
+  <p class="muted small" style="margin-bottom: var(--space-3)">Phụ huynh không cần tài khoản. Giáo viên gửi link riêng của từng học sinh, phụ huynh bấm là xem. Link mẫu:</p>
+  <ul class="list" id="parents"></ul>
+  <p style="margin-top: var(--space-5)"><button class="btn danger" id="reset">Đặt lại dữ liệu mẫu</button></p>
+</main>
+<script type="module">
+import * as db from "./lib/db.js";
+import { esc } from "./lib/ui.js";
+db.logout();
+const classes = await db.listClasses();
+const teachers = (await db.listProfiles()).filter((p) => p.role === "teacher");
+document.getElementById("teacher").innerHTML = teachers.map((p) => `<li><a class="row" href="teacher/exams.html" data-id="${p.id}"><span class="title">${esc(p.name)}</span><span class="badge">Giáo viên</span></a></li>`).join("");
+document.getElementById("parents").innerHTML = (await db.listDemoLinks()).map((s) => `<li><a class="row" href="parent/index.html?t=${s.token}"><span class="title">Phụ huynh của ${esc(s.name)}</span><span class="badge info">${esc(classes.find((c) => c.id === s.class_id)?.name)}</span></a></li>`).join("");
+document.getElementById("teacher").addEventListener("click", (e) => { const a = e.target.closest("[data-id]"); if (a) db.login(a.dataset.id); });
+document.getElementById("reset").addEventListener("click", async (e) => {
+  if (!confirm("Xóa toàn bộ dữ liệu hiện tại và tạo lại dữ liệu mẫu?")) return;
+  e.target.disabled = true; e.target.textContent = "Đang đặt lại...";
+  await db.resetDemo();
+  location.reload();
+});
+</script>
+</body>
+</html>
